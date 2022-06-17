@@ -1,6 +1,6 @@
 # NeuralNetwork
 
-Simple library for creating dense neural networks in c++
+Simple library for creating Dense Neural Networks in c++
 
 ```C++
   vector<vector<float>> inputs = loadImages("images");
