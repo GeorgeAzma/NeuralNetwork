@@ -2,7 +2,7 @@
 
 Simple library for creating dense neural networks in c++
 
-```
+```C++
   NeuralNetwork net;
   net.add(DenseLayer(784));
   net.add(DenseLayer(16));
