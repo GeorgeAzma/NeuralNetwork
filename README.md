@@ -3,10 +3,14 @@
 Simple library for creating dense neural networks in c++
 
 ```C++
+  vector<vector<float>> inputs = loadImages("images");
+  vector<vector<float>> labels = loadLabels("labels");
+
   NeuralNetwork net;
   net.add(DenseLayer(784));
-  net.add(DenseLayer(16));
-  net.add(DenseLayer(10));
+  net.add(DenseLayer(16, ActivationFunctions::RELU));
+  net.add(DenseLayer(16, ActivationFunctions::RELU));
+  net.add(DenseLayer(10, ActivationFunctions::LINEAR));
   net.build();
   
   net.train(inputs, labels);
@@ -15,6 +19,16 @@ Simple library for creating dense neural networks in c++
   
   vector<float> output = net.getOutput();
   float prediction = vectorToClass(output);
+  
+  { //Save trained network (weights,biases...)
+    ofstream save("save.net");
+    save << net;
+  }
+  
+  { //Load trained network (weights,biases...)
+    ifstream save("save.net");
+    save >> net;
+  }
 ```
 
 Note: This only supports training on cpu and not planning on supporting gpu 
