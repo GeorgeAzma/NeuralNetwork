@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <random>
 #include <numeric>
+#include <concepts>
 
 class DebugTimer
 {
@@ -61,17 +62,7 @@ static std::vector<float> classToVector(size_t Class, size_t max_size)
 
 static size_t vectorToClass(const std::vector<float>& vec)
 {
-	size_t Class = 0;
-	float max = -std::numeric_limits<float>::max();
-	for(size_t i = 0; i < vec.size(); ++i)
-	{
-		if(vec[i] > max)
-		{
-			Class = i;
-			max = vec[i];
-		}
-	}
-	return Class;
+	return size_t(std::max_element(vec.begin(), vec.end()) - vec.begin());
 }
 
 template<typename T>
@@ -83,10 +74,10 @@ static std::vector<std::vector<T>> splitVector(const std::vector<T>& vec, size_t
     size_t begin = 0;
     size_t end = 0;
 
-    for (size_t i = 0; i < std::min(n, vec.size()); ++i)
+    for (size_t i = 0; i < n; ++i)
     {
-        end += (remain > 0) ? (length + !!(remain--)) : length;
-        out_vec.push_back(std::vector<T>(vec.begin() + begin, vec.begin() + end));
+        end += length + (i < remain);
+        out_vec.emplace_back(vec.begin() + begin, vec.begin() + end);
         begin = end;
     }
 
@@ -172,6 +163,7 @@ public:
 	{
 		return std::numeric_limits<result_type>::min();
 	}
+
 	result_type operator()()
 	{
 		return next();

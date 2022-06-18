@@ -1,56 +1,451 @@
-enum class ActivationFunctions : size_t
-{
-	RELU = 0,
-	LRELU,
-	SIGMOID,
-	ARCTAN,
-	TANH,
-	STEP,
-	LINEAR,
-	SOFTMAX,
-	ELU,
-	SWISH,
-	SOFTPLUS
-};
+
 
 struct ActivationFunction
 {
-	ActivationFunctions type;
-	std::vector<float>(*activate)(const std::vector<float>&) = nullptr;
-	std::vector<float>(*derivate)(const std::vector<float>&) = nullptr;
+	enum class Type : uint8_t
+	{
+		RELU,
+		LRELU,
+		SIGMOID,
+		ARCTAN,
+		TANH,
+		STEP,
+		LINEAR,
+		SOFTMAX,
+		ELU,
+		SWISH,
+		SOFTPLUS
+	};
+
+public:
+	ActivationFunction(Type type) 
+	: type(type) {}
+
+	virtual std::vector<float> operator()(const std::vector<float>& inputs) const = 0;
+	virtual std::vector<float> derivative(const std::vector<float>& inputs) const = 0;
+	
+	Type getType() const { type; }
+
+	virtual void save(std::ostream& os) const {}
+	virtual void load(std::istream& is) {}
+
+	static friend std::ostream& operator<<(std::ostream& os, const ActivationFunction& activation_function)
+	{
+		activation_function.save(os);
+		return os;
+	}
+	static friend std::istream& operator>>(std::istream& is, ActivationFunction& activation_function)
+	{
+		activation_function.load(is);
+		return is;
+	}
+
+private:
+	Type type;
+};
+		
+struct RELU : public ActivationFunction
+{
+	RELU() 
+	: ActivationFunction(Type::RELU) {}
+
+	std::vector<float> operator()(const std::vector<float>& inputs) const override
+	{
+		std::vector<float> activations = inputs; 
+		for(auto& a : activations) 
+			a = a * (a >= 0);
+		return activations; 
+	}
+	std::vector<float> derivative(const std::vector<float>& inputs) const override
+	{
+		std::vector<float> activations = inputs; 
+		for(auto& a : activations) 
+			a = a >= 0;
+		return activations; 
+	}
 };
 
-enum class CostFunctions
+struct LRELU : public ActivationFunction
 {
-	MSE, //Mean squared error
-	CCE, //Categorical cross entropy, Use this with softmax activation function for outputs
+	LRELU(float scale = 0.01f) 
+	: scale(scale), ActivationFunction(Type::LRELU) {}
+
+	std::vector<float> operator()(const std::vector<float>& inputs) const override
+	{
+		std::vector<float> activations = inputs; 
+		for(auto& a : activations) 
+			a = (a < 0) ? (-scale * a) : a;
+		return activations; 
+	}
+	std::vector<float> derivative(const std::vector<float>& inputs) const override
+	{
+		std::vector<float> activations = inputs; 
+		for(auto& a : activations) 
+			a = a >= 0.0f ? 1.0f : scale;
+		return activations; 
+	}
+	
+	void save(std::ostream& os) const 
+	{
+		os.write((const char*)&scale, sizeof(scale));
+	}
+	virtual void load(std::istream& is) 
+	{
+		is.read((char*)&scale, sizeof(scale));
+	}
+
+public:
+	float scale;
+};
+
+struct Sigmoid : public ActivationFunction
+{
+	Sigmoid() 
+	: ActivationFunction(Type::SIGMOID) {}
+
+	std::vector<float> operator()(const std::vector<float>& inputs) const override
+	{
+		std::vector<float> activations = inputs; 
+		for(auto& a : activations) 
+			a = 1.0f / (1.0f + std::exp(-a));
+		return activations; 
+	}
+	std::vector<float> derivative(const std::vector<float>& inputs) const override
+	{
+		std::vector<float> activations = inputs; 
+		for(auto& a : activations) 
+		{
+			float s = 1.0f / (1.0f + std::exp(-a));
+			a = s * (1.0f - s);
+		}
+		return activations; 
+	}
+};
+
+struct Arctan : public ActivationFunction
+{
+	Arctan() 
+	: ActivationFunction(Type::ARCTAN) {}
+
+	std::vector<float> operator()(const std::vector<float>& inputs) const override
+	{
+		std::vector<float> activations = inputs; 
+		for(auto& a : activations) 
+			a = std::atan(a);
+		return activations; 
+	}
+	std::vector<float> derivative(const std::vector<float>& inputs) const override
+	{
+		std::vector<float> activations = inputs; 
+		for(auto& a : activations) 
+			a = 1.0f / (a * a + 1.0f);
+		return activations; 
+	}
+};
+
+struct Tanh : public ActivationFunction
+{
+	Tanh() 
+	: ActivationFunction(Type::TANH) {}
+
+	std::vector<float> operator()(const std::vector<float>& inputs) const override
+	{
+		std::vector<float> activations = inputs; 
+		for(auto& a : activations) 
+			a = std::tanh(a);
+		return activations; 
+	}
+	std::vector<float> derivative(const std::vector<float>& inputs) const override
+	{
+		std::vector<float> activations = inputs; 
+		for(auto& a : activations) 
+		{
+			float t = std::tanh(a);
+			a = 1.0f - t * t;
+		}
+		return activations; 
+	}
+};
+
+struct Step : public ActivationFunction
+{
+	Step() 
+	: ActivationFunction(Type::STEP) {}
+
+	std::vector<float> operator()(const std::vector<float>& inputs) const override
+	{
+		std::vector<float> activations = inputs; 
+		for(auto& a : activations) 
+			a = a <= 0.0f ? -1.0f : 1.0f;
+		return activations; 
+	}
+	std::vector<float> derivative(const std::vector<float>& inputs) const override
+	{
+		return std::vector<float>(inputs.size(), 0.0f); 
+	}
+};
+
+struct Linear : public ActivationFunction
+{
+	Linear() 
+	: ActivationFunction(Type::LINEAR) {}
+
+	std::vector<float> operator()(const std::vector<float>& inputs) const override
+	{
+		return inputs;
+	}
+	std::vector<float> derivative(const std::vector<float>& inputs) const override
+	{
+		return std::vector<float>(inputs.size(), 1.0f); 
+	}
+};
+
+struct Softmax : public ActivationFunction
+{
+	Softmax() 
+	: ActivationFunction(Type::SOFTMAX) {}
+
+	std::vector<float> operator()(const std::vector<float>& inputs) const override
+	{
+		std::vector<float> activations = inputs;
+		//For avoiding overflow
+		float max = *std::max_element(activations.begin(), activations.end());
+		for(auto& a : activations)
+		{
+			a -= max;
+			a = std::exp(a);
+		}
+		float isum = 1.0f / std::accumulate(activations.begin(), activations.end(), 0.0f);
+		for(auto& a : activations)
+			a *= isum;
+		return activations;
+	}
+	std::vector<float> derivative(const std::vector<float>& inputs) const override
+	{
+		return std::vector<float>(inputs.size(), 1.0f);
+	}
+};
+
+struct ELU : public ActivationFunction
+{
+	ELU(float scale = 0.1f) 
+	: scale(scale), ActivationFunction(Type::ELU) {}
+
+	std::vector<float> operator()(const std::vector<float>& inputs) const override
+	{
+		std::vector<float> activations = inputs; 
+		for(auto& a : activations) 
+			a = a >= 0.0f ? a : scale * (std::exp(a) - 1.0f);
+		return activations; 
+	}
+	std::vector<float> derivative(const std::vector<float>& inputs) const override
+	{
+		std::vector<float> activations = inputs; 
+		for(auto& a : activations) 
+			a = a >= 0.0f ? 1.0f : scale * std::exp(a);
+		return activations; 
+	}
+	
+	void save(std::ostream& os) const 
+	{
+		os.write((const char*)&scale, sizeof(scale));
+	}
+	virtual void load(std::istream& is) 
+	{
+		is.read((char*)&scale, sizeof(scale));
+	}
+
+public:
+	float scale;
+};
+
+struct Swish : public ActivationFunction
+{
+	Swish() 
+	: ActivationFunction(Type::SWISH) {}
+
+	std::vector<float> operator()(const std::vector<float>& inputs) const override
+	{
+		std::vector<float> activations = inputs; 
+		for(auto& a : activations) 
+			a = a / (1.0f + std::exp(-a));
+		return activations; 
+	}
+	std::vector<float> derivative(const std::vector<float>& inputs) const override
+	{
+		std::vector<float> activations = inputs; 
+		for(auto& a : activations) 
+		{
+			float e = std::exp(a) + 1.0f;
+			a = (e - 1.0f) * (e + a) / (e * e);
+		}
+		return activations; 
+	}
+};
+
+struct Softplus : public ActivationFunction
+{
+	Softplus() 
+	: ActivationFunction(Type::SOFTPLUS) {}
+	
+	std::vector<float> operator()(const std::vector<float>& inputs) const override
+	{
+		std::vector<float> activations = inputs; 
+		for(auto& a : activations) 
+			a = std::log(1.0f + std::exp(a));
+		return activations; 
+	}
+	std::vector<float> derivative(const std::vector<float>& inputs) const override
+	{
+		std::vector<float> activations = inputs; 
+		for(auto& a : activations) 
+			a = 1.0f / (1.0f + std::exp(-a));
+		return activations; 
+	}
 };
 
 struct CostFunction
 {
-	CostFunctions type;
-
-	CostFunction& operator=(float(*func)(const std::vector<float>&, const std::vector<float>&))
+	enum class Type : uint8_t
 	{
-		this->func = func;
-		return *this;
-	}
-	float operator()(const std::vector<float>& target, const std::vector<float>& output) const 
-	{ 
-		return func(target, output); 
-	}
-	operator bool() const { return func; }
+		MSE,
+		CCE,
+	};
+
+public:
+	CostFunction(Type type) 
+	: type(type) {}
+	
+	virtual float operator()(const std::vector<float>& targets, const std::vector<float>& outputs) const = 0;
+	
+	Type getType() const { return type; }
 
 private:
-	float(*func)(const std::vector<float>&, const std::vector<float>&) = nullptr;
+	Type type;
 };
 
+struct MSE : public CostFunction //Mean squared error
+{
+	MSE() 
+	: CostFunction(Type::MSE) {}
+
+	float operator()(const std::vector<float>& targets, const std::vector<float>& outputs) const
+	{
+		float loss = 0.0f;
+		for(size_t i = 0; i < outputs.size(); ++i)
+			loss += (targets[i] - outputs[i]) * (targets[i] - outputs[i]);
+		loss /= outputs.size();
+		return loss;
+	}
+};
+
+struct CCE : public CostFunction //Categorical cross entropy
+{
+	CCE() 
+	: CostFunction(Type::CCE) {}
+
+	float operator()(const std::vector<float>& targets, const std::vector<float>& outputs) const
+	{
+		float loss = 0.0f;
+		for(size_t i = 0; i < targets.size(); ++i)
+			loss += std::log(std::clamp(outputs[i], 1e-7f, 1.0f - 1e-7f)) * targets[i];
+		loss *= -1.0f;
+		return loss;
+	}
+};
+
+struct Optimizer
+{
+	enum class Type : uint8_t
+	{
+		SGD
+	};
+
+public:
+	Optimizer(Type type = Type::SGD) 
+	: type(type) {}
+
+	virtual void optimize(
+		std::vector<std::vector<std::vector<float>>>& weights, 
+		const std::vector<std::vector<std::vector<float>>>& delta_weights,
+		const std::vector<std::vector<std::vector<float>>>& prev_delta_weights,
+		std::vector<std::vector<float>>& biases,
+		const std::vector<std::vector<float>>& delta_biases,
+		const std::vector<std::vector<float>>& prev_delta_biases, size_t iteration = 0) const = 0;
+	
+	Type getType() const { return type; }
+	
+	virtual void save(std::ostream& os) const {}
+	virtual void load(std::istream& is) {}
+
+	static friend std::ostream& operator<<(std::ostream& os, const Optimizer& optimizer)
+	{
+		optimizer.save(os);
+		return os;
+	}
+	static friend std::istream& operator>>(std::istream& is, Optimizer& optimizer)
+	{
+		optimizer.load(is);
+		return is;
+	}
+
+private:
+	Type type;
+};
+
+struct SGD : public Optimizer
+{
+	SGD(float learning_rate = 0.01f, float momentum = 0.9f, float decay = 0.01f) 
+	: learning_rate(learning_rate), momentum(momentum), decay(decay), Optimizer(Type::SGD)
+	{}
+
+	void optimize(
+		std::vector<std::vector<std::vector<float>>>& weights, 
+		const std::vector<std::vector<std::vector<float>>>& delta_weights,
+		const std::vector<std::vector<std::vector<float>>>& prev_delta_weights,
+		std::vector<std::vector<float>>& biases,
+		const std::vector<std::vector<float>>& delta_biases,
+		const std::vector<std::vector<float>>& prev_delta_biases, size_t iteration = 0) const override
+	{
+		float learning_rate = this->learning_rate * (1.0f / (1.0f + decay * iteration));
+
+		//Update weights
+		for(size_t layer = 0; layer < delta_weights.size(); ++layer)
+			for(size_t next_neuron = 0; next_neuron < delta_weights[layer].size(); ++next_neuron)
+				for(size_t neuron = 0; neuron < delta_weights[layer][next_neuron].size(); ++neuron)
+					weights[layer][next_neuron][neuron] += learning_rate * delta_weights[layer][next_neuron][neuron] + momentum * learning_rate * prev_delta_weights[layer][next_neuron][neuron];
+
+		//Update biases
+		for(size_t layer = 0; layer < delta_biases.size(); ++layer)
+			for(size_t neuron = 0; neuron < delta_biases[layer].size(); ++neuron)
+				biases[layer][neuron] += learning_rate * delta_biases[layer][neuron] + momentum * learning_rate * prev_delta_biases[layer][neuron];
+	}
+
+	void save(std::ostream& os) const override
+	{
+		os.write((const char*)&learning_rate, sizeof(learning_rate));
+		os.write((const char*)&momentum, sizeof(momentum));
+		os.write((const char*)&decay, sizeof(decay));
+	}
+	void load(std::istream& is) override
+	{
+		is.read((char*)&learning_rate, sizeof(learning_rate));
+		is.read((char*)&momentum, sizeof(momentum));
+		is.read((char*)&decay, sizeof(decay));
+	}
+
+	float learning_rate;
+	float momentum;
+	float decay;
+};
+
+template<typename T = RELU, typename... Args>
 struct DenseLayer
 {
-	DenseLayer(size_t size, ActivationFunctions activation = ActivationFunctions::RELU) 
-	: size(size), activation(activation) {}
+	DenseLayer(size_t size, Args... args) 
+	: size(size), activation_function(std::make_shared<T>(std::forward<Args>(args)...)) {}
 
-	ActivationFunctions activation;
+	std::shared_ptr<ActivationFunction> activation_function = nullptr;
 	size_t size;
 };
 
@@ -59,19 +454,19 @@ class NeuralNetwork
 public:
 	NeuralNetwork() = default;
 
-	void setCostFunction(CostFunctions cost_function)
-	{
-		this->cost_function = toCostFunction(cost_function);
-	}
-	void add(const DenseLayer& layer)
+	template<typename T = RELU, typename... Args>
+	void add(const DenseLayer<T, Args...>& layer)
 	{
 		topology.emplace_back(layer.size);
-		activation_functions.emplace_back(toActivationFunction(layer.activation));
+		activation_functions.emplace_back(layer.activation_function);
 	}
 	void build()
 	{
-		if(!cost_function) 
-			cost_function = toCostFunction(CostFunctions::MSE);
+		if(!cost_function.get()) 
+			cost_function = std::make_unique<MSE>();
+
+		if(!optimizer.get()) 
+			optimizer = std::make_unique<SGD>();
 
 		//TODO: Assert that topology.size() >= 2;
 		neurons.resize(topology.size());
@@ -79,8 +474,10 @@ public:
 		neuron_errors.resize(neurons.size());
 		biases.resize(topology.size() - 1);
 		delta_biases.resize(biases.size());
+		prev_delta_biases.resize(biases.size());
 		weights.resize(topology.size() - 1);
 		delta_weights.resize(weights.size());
+		prev_delta_weights.resize(weights.size());
 
 		for(size_t layer = 0; layer < neurons.size(); ++layer)
 		{
@@ -93,12 +490,14 @@ public:
 		{
 			weights[layer].resize(topology[layer + 1]);
 			delta_weights[layer].resize(weights[layer].size());
+			prev_delta_weights[layer].resize(weights[layer].size());
 		}
 
 		for(size_t layer = 0; layer < biases.size(); ++layer)
 		{
 			biases[layer].resize(neurons[layer + 1].size());
 			delta_biases[layer].resize(biases[layer].size());
+			prev_delta_biases[layer].resize(biases[layer].size());
 		}
 
 		for(size_t layer = 0; layer < weights.size(); ++layer)
@@ -108,6 +507,7 @@ public:
 			{
 				weights[layer][next_neuron].resize(neurons[layer].size());
 				delta_weights[layer][next_neuron].resize(weights[layer][next_neuron].size());
+				prev_delta_weights[layer][next_neuron].resize(weights[layer][next_neuron].size());
 			}
 		}
 
@@ -128,7 +528,7 @@ public:
 			size_t next_layer = layer + 1;
 			for(size_t next_neuron = 0; next_neuron < topology[next_layer]; ++next_neuron)
 				neurons[next_layer][next_neuron] = std::inner_product(activated_neurons[layer].begin(), activated_neurons[layer].end(), weights[layer][next_neuron].begin(), biases[layer][next_neuron]);
-			activated_neurons[next_layer] = activation_functions[next_layer].activate(neurons[next_layer]);
+			activated_neurons[next_layer] = (*activation_functions[next_layer])(neurons[next_layer]);
 		}
 	}
 	void backpropagate(const std::vector<float>& labels)
@@ -148,7 +548,7 @@ public:
 		{
 			size_t layer = topology.size() - 2 - ri;
 			size_t next_layer = layer + 1;
-			std::vector<float> derivative = activation_functions[layer].derivate(neurons[layer]);
+			std::vector<float> derivative = activation_functions[layer]->derivative(neurons[layer]);
 			for (size_t neuron = 0; neuron < topology[layer]; ++neuron)
 			{
 				neuron_errors[layer][neuron] = 0.0f;
@@ -171,78 +571,92 @@ public:
 				delta_biases[layer][next_neuron] += neuron_errors[next_layer][next_neuron];
 		}
 	}
-	void update()
+	void update(size_t iteration = 0)
 	{
-		//Update weights
-		for(size_t layer = 0; layer < delta_weights.size(); ++layer)
-		{
-			for(size_t next_neuron = 0; next_neuron < delta_weights[layer].size(); ++next_neuron)
-			{
-				for(size_t neuron = 0; neuron < delta_weights[layer][next_neuron].size(); ++neuron)
-				{
-					weights[layer][next_neuron][neuron] += learning_rate * delta_weights[layer][next_neuron][neuron];
-					delta_weights[layer][next_neuron][neuron] = 0.0f;
-				}
-			}
-		}
+		optimizer->optimize(weights, delta_weights, prev_delta_weights, biases, delta_biases, prev_delta_biases, iteration);
 
-		//Update biases
-		for(size_t layer = 0; layer < delta_biases.size(); ++layer)
-		{
-			for(size_t neuron = 0; neuron < delta_biases[layer].size(); ++neuron)
-			{
-				biases[layer][neuron] += learning_rate * delta_biases[layer][neuron];
-				delta_biases[layer][neuron] = 0.0f;
-			}
-		}
+		prev_delta_weights = delta_weights;
+		prev_delta_biases = delta_biases;
+
+		for(auto& delta_weight : delta_weights)
+			for(auto& dw : delta_weight)
+				for(auto& w : dw)
+					w = 0.0f;
+
+		for(auto& delta_bias : delta_biases)
+			for(auto& db : delta_bias)
+				db = 0.0f;
 	}
 
-	void train(const std::vector<float>& input, const std::vector<float>& target)
+	void train(const std::vector<float>& inputs, const std::vector<float>& labels)
 	{
-		forward(input);
-		backpropagate(target);
+		forward(inputs);
+		backpropagate(labels);
 	}	
-	void train(const std::vector<std::vector<float>>& inputs, const std::vector<std::vector<float>>& targets, size_t epochs = 1)
+	void train(std::vector<std::vector<float>>& inputs, std::vector<std::vector<float>>& labels, size_t epochs = 1, size_t batches = 1)
 	{
-		std::vector<size_t> indices(inputs.size());
-		std::iota(indices.begin(), indices.end(), (size_t)0);
+		RNG r;
+		size_t iteration = 0;
 		for(size_t epoch = 0; epoch < epochs; ++epoch)
-		{  
-			RNG rd;
-			std::shuffle(indices.begin(), indices.end(), rd);
-			for(size_t i = 0; i < inputs.size(); ++i)
-				train(inputs[indices[i]], targets[indices[i]]);
+		{
+			auto last_seed = r.seed;
+			std::shuffle(inputs.begin(), inputs.end(), r);  
+			r.seed = last_seed;
+			std::shuffle(labels.begin(), labels.end(), r); 
+
+			auto input_batches = splitVector(inputs, inputs.size() / batches);
+			auto label_batches = splitVector(labels, labels.size() / batches);
+
+			for(size_t i = 0; i < input_batches.size(); ++i)
+			{
+				for(size_t j = 0; j < input_batches[i].size(); ++j)
+				{	
+					forward(input_batches[i][j]);
+					calculateGradient(label_batches[i][j]);
+				}
+				update(iteration++);
+			}
 		}
 	}
 	
 	size_t getInputCount() const { return topology.front(); }
 	size_t getOutputCount() const { return topology.back(); }
-	float calculateLoss(const std::vector<float>& target) { return cost_function(target, getOutput()); }
+	float calculateLoss(const std::vector<float>& target) { return (*cost_function)(target, getOutput()); }
 	const std::vector<float>& getOutput() const { return activated_neurons.back(); }
-	
-	void setLearningRate(float learning_rate) { this->learning_rate = learning_rate; }
+
+	template<typename T, typename... Args> 
+	void setCostFunction(Args... args) { cost_function = std::make_unique<T>(std::forward<Args>(args)...); }
+	template<typename T, typename... Args>
+	void setOptimizer(Args... args) { optimizer = std::make_unique<T>(std::forward<Args>(args)...); }
 
 	void operator()(const std::vector<float>& input) { forward(input); }	
 	static friend std::ostream& operator<<(std::ostream& os, const NeuralNetwork& net)
 	{
 		size_t topology_size = net.topology.size();
 		os.write((const char*)&topology_size, sizeof(topology_size));
-		for(size_t layer = 0; layer < net.topology.size(); ++layer)
-			os.write((const char*)&net.topology[layer], sizeof(net.topology[layer]));
+		for(const auto& t : net.topology)
+			os.write((const char*)&t, sizeof(t));
 
-		for(size_t i = 0; i < net.topology.size(); ++i)
-			os.write((const char*)&net.activation_functions[i].type, sizeof(net.activation_functions[i].type));
-		os.write((const char*)&net.cost_function.type, sizeof(net.cost_function.type));
-		os.write((const char*)&net.learning_rate, sizeof(net.learning_rate));
+		for(const auto& a : net.activation_functions)
+		{
+			ActivationFunction::Type activation_function_type = a->getType();
+			os.write((const char*)&activation_function_type, sizeof(activation_function_type));
+			os << *a;
+		}
+		CostFunction::Type cost_function_type = net.cost_function->getType();
+		os.write((const char*)&cost_function_type, sizeof(cost_function_type));
+		Optimizer::Type optimizer_type = net.optimizer->getType();
+		os.write((const char*)&optimizer_type, sizeof(optimizer_type));
+		os << *net.optimizer;
 
-		for(size_t layer = 0; layer < net.weights.size(); ++layer)
-			for(size_t neuron = 0; neuron < net.weights[layer].size(); ++neuron)
-				for(size_t weight = 0; weight < net.weights[layer][neuron].size(); ++weight)
-					os.write((const char*)&net.weights[layer][neuron][weight], sizeof(net.weights[layer][neuron][weight]));
+		for(const auto& weights : net.weights)
+			for(const auto& weight : weights)
+				for(const auto& w : weight)
+					os.write((const char*)&w, sizeof(w));
 
-		for(size_t layer = 0; layer < net.biases.size(); ++layer)
-			for(size_t neuron = 0; neuron < net.biases[layer].size(); ++neuron)
-				os.write((const char*)&net.biases[layer][neuron], sizeof(net.biases[layer][neuron]));
+		for(const auto& biases : net.biases)
+			for(const auto& b : biases)
+				os.write((const char*)&b, sizeof(b));
 
 		return os;
 	}
@@ -259,298 +673,116 @@ public:
 		net.activation_functions.resize(net.topology.size());
 		for(size_t i = 0; i < net.topology.size(); ++i)
 		{
-			ActivationFunctions activation;
-			is.read((char*)&activation, sizeof(activation));
-			net.activation_functions[i] = NeuralNetwork::toActivationFunction(activation);
+			ActivationFunction::Type activation_function_type;
+			is.read((char*)&activation_function_type, sizeof(activation_function_type));
+			switch(activation_function_type)
+			{
+			case ActivationFunction::Type::RELU:
+				net.activation_functions[i] = std::make_shared<RELU>();
+				break;
+			case ActivationFunction::Type::LRELU:
+				net.activation_functions[i] = std::make_shared<LRELU>();
+				break;
+			case ActivationFunction::Type::SIGMOID:
+				net.activation_functions[i] = std::make_shared<Sigmoid>();
+				break;
+			case ActivationFunction::Type::ARCTAN:
+				net.activation_functions[i] = std::make_shared<Arctan>();
+				break;
+			case ActivationFunction::Type::TANH:
+				net.activation_functions[i] = std::make_shared<Tanh>();
+				break;
+			case ActivationFunction::Type::STEP:
+				net.activation_functions[i] = std::make_shared<Step>();
+				break;
+			case ActivationFunction::Type::LINEAR:
+				net.activation_functions[i] = std::make_shared<Linear>();
+				break;
+			case ActivationFunction::Type::SOFTMAX:
+				net.activation_functions[i] = std::make_shared<Softmax>();
+				break;
+			case ActivationFunction::Type::ELU:
+				net.activation_functions[i] = std::make_shared<ELU>();
+				break;
+			case ActivationFunction::Type::SWISH:
+				net.activation_functions[i] = std::make_shared<Swish>();
+				break;
+			case ActivationFunction::Type::SOFTPLUS:
+				net.activation_functions[i] = std::make_shared<Softplus>();
+				break;
+			}
+			is >> *net.activation_functions[i];
 		}
 		
-		CostFunctions cost;
-		is.read((char*)&cost, sizeof(cost));
-		net.cost_function = NeuralNetwork::toCostFunction(cost);
-		is.read((char*)&net.learning_rate, sizeof(net.learning_rate));
+		CostFunction::Type cost_function_type;
+		is.read((char*)&cost_function_type, sizeof(cost_function_type));
+		switch(cost_function_type)
+		{
+		case CostFunction::Type::MSE:
+			net.cost_function = std::make_unique<MSE>();
+			break;
+		case CostFunction::Type::CCE:
+			net.cost_function = std::make_unique<CCE>();
+			break;
+		}
+		//is >> *net.cost_function;
+		Optimizer::Type optimizer_type;
+		is.read((char*)&optimizer_type, sizeof(optimizer_type));
+		switch(optimizer_type)
+		{
+		case Optimizer::Type::SGD:
+			net.optimizer = std::make_unique<SGD>();
+			break;
+		}
+		is >> *net.optimizer;
 		net.build();
 
-		for(size_t layer = 0; layer < net.weights.size(); ++layer)
-			for(size_t neuron = 0; neuron < net.weights[layer].size(); ++neuron)
-				for(size_t weight = 0; weight < net.weights[layer][neuron].size(); ++weight)
-					is.read((char*)&net.weights[layer][neuron][weight], sizeof(net.weights[layer][neuron][weight]));
+		for(const auto& weights : net.weights)
+			for(const auto& weight : weights)
+				for(const auto& w : weight)
+					is.read((char*)&w, sizeof(w));
 
-		for(size_t layer = 0; layer < net.biases.size(); ++layer)
-			for(size_t neuron = 0; neuron < net.biases[layer].size(); ++neuron)
-				is.read((char*)&net.biases[layer][neuron], sizeof(net.biases[layer][neuron]));
+		for(const auto& biases : net.biases)
+			for(const auto& b : biases)
+				is.read((char*)&b, sizeof(b));
 
 		return is;
 	}
 
 private:
-	static ActivationFunction toActivationFunction(ActivationFunctions activation)
-	{
-		ActivationFunction activation_function{};
-		activation_function.type = activation;
-
-		switch (activation)
-		{
-		case ActivationFunctions::RELU:
-			activation_function.activate = [](const std::vector<float>& input) 
-			{
-				std::vector<float> activation = input; 
-				for(auto& a : activation) 
-					a = a * (a >= 0);
-				return activation; 
-			};
-			activation_function.derivate = [](const std::vector<float>& input)
-			{
-				std::vector<float> activation = input; 
-				for(auto& a : activation) 
-					a = a >= 0;
-				return activation; 
-			};
-			break;
-		case ActivationFunctions::LRELU:
-			activation_function.activate = [](const std::vector<float>& input)
-			{
-				constexpr float k = -0.01f;
-				std::vector<float> activation = input; 
-				for(auto& a : activation) 
-					a = (a < 0) ? (k * a) : a;
-				return activation; 
-			};
-			activation_function.derivate = [](const std::vector<float>& input)
-			{
-				constexpr float k = 0.01f;
-				std::vector<float> activation = input; 
-				for(auto& a : activation) 
-					a = a >= 0 ? 1 : k;
-				return activation; 
-			};
-			break;
-		case ActivationFunctions::SIGMOID:
-			activation_function.activate = [](const std::vector<float>& input)
-			{
-				std::vector<float> activation = input; 
-				for(auto& a : activation) 
-					a = 1.0f / (1.0f + std::exp(-a));
-				return activation; 
-			};
-			activation_function.derivate = [](const std::vector<float>& input)
-			{
-				std::vector<float> activation = input; 
-				for(auto& a : activation) 
-				{
-					float s = 1.0f / (1.0f + std::exp(-a));
-					a = s * (1.0f - s);
-				}
-				return activation; 
-			};
-			break;
-		case ActivationFunctions::ARCTAN:
-			activation_function.activate = [](const std::vector<float>& input)
-			{
-				std::vector<float> activation = input; 
-				for(auto& a : activation) 
-					a = std::atan(a);
-				return activation; 
-			};
-			activation_function.derivate = [](const std::vector<float>& input)
-			{
-				std::vector<float> activation = input; 
-				for(auto& a : activation) 
-					a = 1.0f / (a * a + 1.0f);
-				return activation; 
-			};
-			break;
-		case ActivationFunctions::TANH:
-			activation_function.activate = [](const std::vector<float>& input)
-			{
-				std::vector<float> activation = input; 
-				for(auto& a : activation) 
-					a = std::tanh(a);
-				return activation; 
-			};
-			activation_function.derivate = [](const std::vector<float>& input)
-			{
-				std::vector<float> activation = input; 
-				for(auto& a : activation) 
-				{
-					float t = std::tanh(a);
-					a = 1.0f - t * t;
-				}
-				return activation; 
-			};
-			break;
-		case ActivationFunctions::STEP:
-			activation_function.activate = [](const std::vector<float>& input)
-			{
-				std::vector<float> activation = input; 
-				for(auto& a : activation) 
-					a = a <= 0 ? -1 : 1;
-				return activation; 
-			};
-			activation_function.derivate = [](const std::vector<float>& input)
-			{
-				return std::vector<float>(input.size(), 0.0f); 
-			};
-			break;
-		case ActivationFunctions::LINEAR:
-			activation_function.activate = [](const std::vector<float>& input)
-			{
-				return input;
-			};
-			activation_function.derivate = [](const std::vector<float>& input)
-			{
-				return std::vector<float>(input.size(), 1.0f); 
-			};
-			break;
-		case ActivationFunctions::SOFTMAX:
-			activation_function.activate = [](const std::vector<float>& input)
-			{
-				std::vector<float> activation = input;
-				//For avoiding overflow
-				float max = *std::max_element(activation.begin(), activation.end());
-				for(auto& a : activation)
-				{
-					a -= max;
-					a = std::exp(a);
-				}
-				float isum = 1.0f / std::accumulate(activation.begin(), activation.end(), 0.0f);
-				for(auto& a : activation)
-					a *= isum;
-				return activation;
-			};
-			activation_function.derivate = [](const std::vector<float>& input)
-			{
-				return input;  //TODO:
-			};
-			break;
-		case ActivationFunctions::ELU:
-			activation_function.activate = [](const std::vector<float>& input)
-			{
-				std::vector<float> activation = input; 
-				for(auto& a : activation) 
-					a = a >= 0 ? a : 0.1f * (std::exp(a) - 1.0f);
-				return activation; 
-			};
-			activation_function.derivate = [](const std::vector<float>& input)
-			{
-				std::vector<float> activation = input; 
-				for(auto& a : activation) 
-					a = a >= 0 ? 1.0f : 0.1f * std::exp(a);
-				return activation; 
-			};
-			break;
-		case ActivationFunctions::SWISH:
-			activation_function.activate = [](const std::vector<float>& input)
-			{
-				std::vector<float> activation = input; 
-				for(auto& a : activation) 
-					a = a / (1.0f + std::exp(-a));
-				return activation; 
-			};
-			activation_function.derivate = [](const std::vector<float>& input)
-			{
-				std::vector<float> activation = input; 
-				for(auto& a : activation) 
-				{
-					float e = std::exp(a) + 1;
-					a = (e - 1) * (e + a) / (e * e);
-				}
-				return activation; 
-			};
-			break;
-		case ActivationFunctions::SOFTPLUS:
-			activation_function.activate = [](const std::vector<float>& input)
-			{
-				std::vector<float> activation = input; 
-				for(auto& a : activation) 
-					a = std::log(1.0f + std::exp(a));
-				return activation; 
-			};
-			activation_function.derivate = [](const std::vector<float>& input)
-			{
-				std::vector<float> activation = input; 
-				for(auto& a : activation) 
-					a = 1.0f / (1.0f + std::exp(-a));
-				return activation; 
-			};
-			break;
-		}
-		return activation_function;
-	}
-	static CostFunction toCostFunction(CostFunctions cost)
-	{
-		CostFunction cost_function{};
-		cost_function.type = cost;
-		
-		switch (cost)
-		{
-		case CostFunctions::MSE:
-			cost_function = [](const std::vector<float>& target, const std::vector<float>& output) 
-			{
-				float loss = 0.0f;
-				for(size_t i = 0; i < output.size(); ++i)
-					loss += (target[i] - output[i]) * (target[i] - output[i]);
-				loss /= output.size();
-				return loss;
-			};
-			break;
-		case CostFunctions::CCE:
-			cost_function = [](const std::vector<float>& target, const std::vector<float>& output) 
-			{
-				float loss = 0.0f;
-				for(size_t i = 0; i < target.size(); ++i)
-					loss += std::log(std::clamp(output[i], 1e-7f, 1.0f - 1e-7f)) * target[i];
-				loss *= -1.0f;
-				return loss;
-			};
-			break;
-		}
-
-		return cost_function;
-	}
-
-private:
-	std::vector<size_t> topology;
+	std::vector<uint16_t> topology;
 	std::vector<std::vector<float>> neurons;
 	std::vector<std::vector<float>> activated_neurons;
 	std::vector<std::vector<float>> neuron_errors;
 	std::vector<std::vector<float>> biases;
 	std::vector<std::vector<float>> delta_biases;
+	std::vector<std::vector<float>> prev_delta_biases;
 	std::vector<std::vector<std::vector<float>>> weights; // [Layer][Neuron][Weight coming from previous neuron layer neurons to this neuron]
 	std::vector<std::vector<std::vector<float>>> delta_weights;
-	std::vector<ActivationFunction> activation_functions;
-	CostFunction cost_function;
-	float learning_rate = 0.01f;
+	std::vector<std::vector<std::vector<float>>> prev_delta_weights;
+	std::vector<std::shared_ptr<ActivationFunction>> activation_functions;
+	std::unique_ptr<CostFunction> cost_function = nullptr;
+	std::unique_ptr<Optimizer> optimizer = nullptr;
 };
 
 int main()
 {
 	NeuralNetwork net;
-	net.setLearningRate(0.01f);
-	net.setCostFunction(CostFunctions::CCE);
-	net.add(DenseLayer(784));
-	net.add(DenseLayer(16, ActivationFunctions::RELU));
-	net.add(DenseLayer(10, ActivationFunctions::SOFTMAX));
+	net.setOptimizer<SGD>(0.01f);
+	net.setCostFunction<CCE>();
+	net.add(DenseLayer<>(784));
+	net.add(DenseLayer<LRELU, float>(16, 0.0f));
+	net.add(DenseLayer<Tanh>(16));
+	net.add(DenseLayer<Softmax>(10));
 	net.build();
 
 	std::vector<std::vector<float>> inputs = loadImages("mnist.input");
 	std::vector<std::vector<float>> labels = loadLabels("mnist.label");
 
 	DebugTimer t;
-	net.train(inputs, labels);
+	net.train(inputs, labels, 1, 64);
 	t.stop();
-	
-	for(size_t i = 0; i < 8; ++i)
-	{
-		{
-			std::ofstream save("save.net", std::ios::binary);
-			save << net;
-		}
-		{
-			std::ifstream save("save.net", std::ios::binary);
-			save >> net;
-		}
-	}
-	
+
 	float accuracy = 0.0f;
 	float loss = 0.0f;
 	size_t tests = 10000;
