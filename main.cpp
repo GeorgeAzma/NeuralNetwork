@@ -24,7 +24,7 @@ public:
 	virtual std::vector<float> operator()(const std::vector<float>& inputs) const = 0;
 	virtual std::vector<float> derivative(const std::vector<float>& inputs) const = 0;
 	
-	Type getType() const { type; }
+	Type getType() const { return type; }
 
 	virtual void save(std::ostream& os) const {}
 	virtual void load(std::istream& is) {}
@@ -395,7 +395,7 @@ private:
 
 struct SGD : public Optimizer
 {
-	SGD(float learning_rate = 0.01f, float momentum = 0.9f, float decay = 0.01f) 
+	SGD(float learning_rate = 0.001f, float momentum = 0.9f, float decay = 0.0f) 
 	: learning_rate(learning_rate), momentum(momentum), decay(decay), Optimizer(Type::SGD)
 	{}
 
@@ -407,18 +407,18 @@ struct SGD : public Optimizer
 		const std::vector<std::vector<float>>& delta_biases,
 		const std::vector<std::vector<float>>& prev_delta_biases, size_t iteration = 0) const override
 	{
-		float learning_rate = this->learning_rate * (1.0f / (1.0f + decay * iteration));
+		float lr = learning_rate * (1.0f / (1.0f + decay * iteration));
 
 		//Update weights
 		for(size_t layer = 0; layer < delta_weights.size(); ++layer)
 			for(size_t next_neuron = 0; next_neuron < delta_weights[layer].size(); ++next_neuron)
 				for(size_t neuron = 0; neuron < delta_weights[layer][next_neuron].size(); ++neuron)
-					weights[layer][next_neuron][neuron] += learning_rate * delta_weights[layer][next_neuron][neuron] + momentum * learning_rate * prev_delta_weights[layer][next_neuron][neuron];
+					weights[layer][next_neuron][neuron] += lr * delta_weights[layer][next_neuron][neuron] + momentum * lr * prev_delta_weights[layer][next_neuron][neuron];
 
 		//Update biases
 		for(size_t layer = 0; layer < delta_biases.size(); ++layer)
 			for(size_t neuron = 0; neuron < delta_biases[layer].size(); ++neuron)
-				biases[layer][neuron] += learning_rate * delta_biases[layer][neuron] + momentum * learning_rate * prev_delta_biases[layer][neuron];
+				biases[layer][neuron] += lr * delta_biases[layer][neuron] + momentum * lr * prev_delta_biases[layer][neuron];
 	}
 
 	void save(std::ostream& os) const override
@@ -442,11 +442,17 @@ struct SGD : public Optimizer
 template<typename T = RELU, typename... Args>
 struct DenseLayer
 {
-	DenseLayer(size_t size, Args... args) 
+	DenseLayer(size_t size, Args&&... args) 
 	: size(size), activation_function(std::make_shared<T>(std::forward<Args>(args)...)) {}
 
 	std::shared_ptr<ActivationFunction> activation_function = nullptr;
 	size_t size;
+};
+
+struct TestResult
+{
+	float accuracy = 0.0f;
+	float loss = 0.0f;
 };
 
 class NeuralNetwork
@@ -488,34 +494,27 @@ public:
 
 		for(size_t layer = 0; layer < weights.size(); ++layer)
 		{
-			weights[layer].resize(topology[layer + 1]);
+			size_t next_layer = layer + 1;
+			weights[layer].resize(topology[next_layer]);
 			delta_weights[layer].resize(weights[layer].size());
 			prev_delta_weights[layer].resize(weights[layer].size());
-		}
 
-		for(size_t layer = 0; layer < biases.size(); ++layer)
-		{
-			biases[layer].resize(neurons[layer + 1].size());
-			delta_biases[layer].resize(biases[layer].size());
-			prev_delta_biases[layer].resize(biases[layer].size());
-		}
-
-		for(size_t layer = 0; layer < weights.size(); ++layer)
-		{
-			size_t next_layer = layer + 1;
 			for(size_t next_neuron = 0; next_neuron < topology[next_layer]; ++next_neuron)
 			{
 				weights[layer][next_neuron].resize(neurons[layer].size());
 				delta_weights[layer][next_neuron].resize(weights[layer][next_neuron].size());
 				prev_delta_weights[layer][next_neuron].resize(weights[layer][next_neuron].size());
+				
+				//Random weights calculation	
+				for(auto& w : weights[layer][next_neuron])
+					w = (RNG::Float() * 2.0f - 1.0f) * 0.1f;
 			}
+			
+			biases[layer].resize(neurons[next_layer].size());
+			delta_biases[layer].resize(biases[layer].size());
+			prev_delta_biases[layer].resize(biases[layer].size());
 		}
 
-		//Random weights calculation
-		for(auto& lw : weights)
-			for(auto& nw : lw)
-				for(auto& w : nw)
-					w = (RNG::Float() * 2.0f - 1.0f) * 0.1f;
 	}
 
 	void forward(const std::vector<float>& inputs)
@@ -541,7 +540,7 @@ public:
 	{
 		//Calculate output errors
 		for (size_t neuron = 0; neuron < getOutputCount(); ++neuron)
-			neuron_errors.back()[neuron] = labels[neuron] - getOutput()[neuron];
+			neuron_errors.back()[neuron] = labels[neuron] - activated_neurons.back()[neuron];
 	
 		//Calculate all layer errors based on output errors
 		for (size_t ri = 0; ri < topology.size() - 2; ++ri) //-1 because we already calculated output layer and another - 1 because input layer does not have errors
@@ -593,9 +592,10 @@ public:
 		forward(inputs);
 		backpropagate(labels);
 	}	
-	void train(std::vector<std::vector<float>>& inputs, std::vector<std::vector<float>>& labels, size_t epochs = 1, size_t batches = 1)
+	void train(std::vector<std::vector<float>>& inputs, std::vector<std::vector<float>>& labels, size_t epochs = 1, size_t minibatches = 1)
 	{
 		RNG r;
+		r.seed = time(NULL);
 		size_t iteration = 0;
 		for(size_t epoch = 0; epoch < epochs; ++epoch)
 		{
@@ -604,8 +604,8 @@ public:
 			r.seed = last_seed;
 			std::shuffle(labels.begin(), labels.end(), r); 
 
-			auto input_batches = splitVector(inputs, inputs.size() / batches);
-			auto label_batches = splitVector(labels, labels.size() / batches);
+			auto input_batches = splitVector(inputs, inputs.size() / minibatches);
+			auto label_batches = splitVector(labels, labels.size() / minibatches);
 
 			for(size_t i = 0; i < input_batches.size(); ++i)
 			{
@@ -618,10 +618,78 @@ public:
 			}
 		}
 	}
+	std::vector<TestResult> train(std::vector<std::vector<float>>& inputs, std::vector<std::vector<float>>& labels, size_t epochs, size_t minibatches, size_t batches)
+	{
+		std::vector<TestResult> results(epochs * batches);
+		auto input_batches = splitVector(inputs, batches);
+		auto label_batches = splitVector(labels, batches);
+		
+		for(size_t epoch = 0; epoch < epochs; ++epoch)
+		{
+			for(size_t batch = 0; batch < input_batches.size(); ++batch)
+			{
+				results[epoch * batches + batch] = test(input_batches[batch], label_batches[batch]);
+				train(input_batches[batch], label_batches[batch], 1, minibatches);
+			}
+		}
+
+		return results;
+	}
+
+	TestResult test(const std::vector<float>& inputs, const std::vector<float>& labels)
+	{
+		forward(inputs);
+		TestResult result{};
+		result.accuracy = isCorrect(labels);
+		result.loss = calculateLoss(labels);
+		return result;
+	}
+	TestResult test(const std::vector<std::vector<float>>& inputs, const std::vector<std::vector<float>>& labels)
+	{
+		TestResult result{};
+		for(size_t i = 0; i < inputs.size(); ++i)
+		{
+			TestResult test_result = test(inputs[i], labels[i]);
+			result.accuracy += test_result.accuracy;
+			result.loss += test_result.loss;
+		}
+		result.accuracy /= inputs.size();
+		result.loss /= inputs.size();
+		return result;
+	}
+
+	void reset()
+	{
+		for(size_t l = 0; l < neurons.size(); ++l)
+		{
+			for(size_t n = 0; n < neurons[l].size(); ++n)
+			{
+				neurons[l][n] = 0.0f;
+				activated_neurons[l][n] = 0.0f;
+				neuron_errors[l][n] = 0.0f;
+			}
+		}
+		for(size_t l = 0; l < topology.size() - 1; ++l)
+		{
+			for(size_t nn = 0; nn < neurons[l + 1].size(); ++nn)
+			{
+				biases[l][nn] = 0.0f;
+				delta_biases[l][nn] = 0.0f;
+				prev_delta_biases[l][nn] = 0.0f;
+				for(size_t n = 0; n < neurons[l].size(); ++n)
+				{
+					weights[l][nn][n] = (RNG::Float() * 2.0f - 1.0f) * 0.1f;
+					delta_weights[l][nn][n] = 0.0f;
+					prev_delta_weights[l][nn][n] = 0.0f;
+				}
+			}
+		}
+	}
 	
+	bool isCorrect(const std::vector<float>& labels) const { return vectorToClass(getOutput()) == vectorToClass(labels); }
 	size_t getInputCount() const { return topology.front(); }
 	size_t getOutputCount() const { return topology.back(); }
-	float calculateLoss(const std::vector<float>& target) { return (*cost_function)(target, getOutput()); }
+	float calculateLoss(const std::vector<float>& labels) { return (*cost_function)(labels, getOutput()); }
 	const std::vector<float>& getOutput() const { return activated_neurons.back(); }
 
 	template<typename T, typename... Args> 
@@ -750,7 +818,7 @@ public:
 	}
 
 private:
-	std::vector<uint16_t> topology;
+	std::vector<size_t> topology;
 	std::vector<std::vector<float>> neurons;
 	std::vector<std::vector<float>> activated_neurons;
 	std::vector<std::vector<float>> neuron_errors;
@@ -768,34 +836,34 @@ private:
 int main()
 {
 	NeuralNetwork net;
-	net.setOptimizer<SGD>(0.01f);
+	net.setOptimizer<SGD>(0.002f, 0.9f, 0.0001f);
 	net.setCostFunction<CCE>();
 	net.add(DenseLayer<>(784));
-	net.add(DenseLayer<LRELU, float>(16, 0.0f));
-	net.add(DenseLayer<Tanh>(16));
+	net.add(DenseLayer<RELU>(16));
+	net.add(DenseLayer<RELU>(16));
 	net.add(DenseLayer<Softmax>(10));
 	net.build();
 
-	std::vector<std::vector<float>> inputs = loadImages("mnist.input");
-	std::vector<std::vector<float>> labels = loadLabels("mnist.label");
+	std::vector<std::vector<float>> inputs = loadImages("data/mnist.input");
+	std::vector<std::vector<float>> labels = loadLabels("data/mnist.label");
+
+	std::ofstream plot("plot.csv");
+	plot << "Index,Data,Type\n";
 
 	DebugTimer t;
-	net.train(inputs, labels, 1, 64);
+	auto results = net.train(inputs, labels, 1, 32, 32);
 	t.stop();
+	
+	// size_t index = 0;
+	// for(const auto& result : results)
+	// {
+	// 	plot << index << ',' << result.accuracy << ",A\n";
+	// 	plot << index << ',' << result.loss << ",L\n";
+	// 	++index;
+	// }
 
-	float accuracy = 0.0f;
-	float loss = 0.0f;
-	size_t tests = 10000;
-	for(size_t i = 0; i < tests; ++i)
-	{
-		size_t rand = RNG::Uint() % inputs.size();
-		net.forward(inputs[rand]);
-		accuracy += vectorToClass(net.getOutput()) == vectorToClass(labels[rand]);
-		loss += net.calculateLoss(labels[rand]);
-	}
-	accuracy /= tests;
-	loss /= tests;
-	std::cout << "Accuracy: " << (accuracy * 100) << '%' << std::endl;
-	std::cout << "Loss: " << loss << std::endl;
+	std::cout << net.test(inputs, labels).accuracy << std::endl;
+
+
 	return 0;
 }
