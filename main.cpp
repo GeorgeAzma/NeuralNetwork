@@ -368,10 +368,10 @@ public:
 	virtual void optimize(
 		std::vector<std::vector<std::vector<float>>>& weights, 
 		const std::vector<std::vector<std::vector<float>>>& delta_weights,
-		const std::vector<std::vector<std::vector<float>>>& prev_delta_weights,
+		std::vector<std::vector<std::vector<float>>>& weight_velocities,
 		std::vector<std::vector<float>>& biases,
 		const std::vector<std::vector<float>>& delta_biases,
-		const std::vector<std::vector<float>>& prev_delta_biases, size_t iteration = 0) const = 0;
+		std::vector<std::vector<float>>& bias_velocities, size_t iteration = 0) const = 0;
 	
 	Type getType() const { return type; }
 	
@@ -395,17 +395,17 @@ private:
 
 struct SGD : public Optimizer
 {
-	SGD(float learning_rate = 0.001f, float momentum = 0.9f, float decay = 0.0f) 
-	: learning_rate(learning_rate), momentum(momentum), decay(decay), Optimizer(Type::SGD)
+	SGD(float learning_rate = 0.001f, float momentum = 0.0f, float decay = 0.0f, bool nesterov = false) 
+	: learning_rate(learning_rate), momentum(momentum), decay(decay), nesterov(nesterov), Optimizer(Type::SGD)
 	{}
 
 	void optimize(
 		std::vector<std::vector<std::vector<float>>>& weights, 
 		const std::vector<std::vector<std::vector<float>>>& delta_weights,
-		const std::vector<std::vector<std::vector<float>>>& prev_delta_weights,
+		std::vector<std::vector<std::vector<float>>>& weight_velocities,
 		std::vector<std::vector<float>>& biases,
 		const std::vector<std::vector<float>>& delta_biases,
-		const std::vector<std::vector<float>>& prev_delta_biases, size_t iteration = 0) const override
+		std::vector<std::vector<float>>& bias_velocities, size_t iteration = 0) const override
 	{
 		float lr = learning_rate * (1.0f / (1.0f + decay * iteration));
 
@@ -413,12 +413,23 @@ struct SGD : public Optimizer
 		for(size_t layer = 0; layer < delta_weights.size(); ++layer)
 			for(size_t next_neuron = 0; next_neuron < delta_weights[layer].size(); ++next_neuron)
 				for(size_t neuron = 0; neuron < delta_weights[layer][next_neuron].size(); ++neuron)
-					weights[layer][next_neuron][neuron] += lr * delta_weights[layer][next_neuron][neuron] + momentum * lr * prev_delta_weights[layer][next_neuron][neuron];
-
+				{
+					weight_velocities[layer][next_neuron][neuron] = momentum * weight_velocities[layer][next_neuron][neuron] + lr * delta_weights[layer][next_neuron][neuron];
+					if(nesterov)
+						weights[layer][next_neuron][neuron] += momentum * weight_velocities[layer][next_neuron][neuron] + lr * delta_weights[layer][next_neuron][neuron];
+					else
+						weights[layer][next_neuron][neuron] += weight_velocities[layer][next_neuron][neuron];
+				}
 		//Update biases
 		for(size_t layer = 0; layer < delta_biases.size(); ++layer)
 			for(size_t neuron = 0; neuron < delta_biases[layer].size(); ++neuron)
-				biases[layer][neuron] += lr * delta_biases[layer][neuron] + momentum * lr * prev_delta_biases[layer][neuron];
+			{
+				bias_velocities[layer][neuron] = momentum * bias_velocities[layer][neuron] + lr * delta_biases[layer][neuron];
+				if(nesterov)
+					biases[layer][neuron] += bias_velocities[layer][neuron];
+				else
+					biases[layer][neuron] += momentum * bias_velocities[layer][neuron] + lr * delta_biases[layer][neuron];
+			}
 	}
 
 	void save(std::ostream& os) const override
@@ -426,17 +437,20 @@ struct SGD : public Optimizer
 		os.write((const char*)&learning_rate, sizeof(learning_rate));
 		os.write((const char*)&momentum, sizeof(momentum));
 		os.write((const char*)&decay, sizeof(decay));
+		os.write((const char*)&nesterov, sizeof(nesterov));
 	}
 	void load(std::istream& is) override
 	{
 		is.read((char*)&learning_rate, sizeof(learning_rate));
 		is.read((char*)&momentum, sizeof(momentum));
 		is.read((char*)&decay, sizeof(decay));
+		is.read((char*)&nesterov, sizeof(nesterov));
 	}
 
 	float learning_rate;
 	float momentum;
 	float decay;
+	bool nesterov;
 };
 
 template<typename T = RELU, typename... Args>
@@ -480,10 +494,10 @@ public:
 		neuron_errors.resize(neurons.size());
 		biases.resize(topology.size() - 1);
 		delta_biases.resize(biases.size());
-		prev_delta_biases.resize(biases.size());
+		bias_velocities.resize(biases.size());
 		weights.resize(topology.size() - 1);
 		delta_weights.resize(weights.size());
-		prev_delta_weights.resize(weights.size());
+		weight_velocities.resize(weights.size());
 
 		for(size_t layer = 0; layer < neurons.size(); ++layer)
 		{
@@ -497,13 +511,13 @@ public:
 			size_t next_layer = layer + 1;
 			weights[layer].resize(topology[next_layer]);
 			delta_weights[layer].resize(weights[layer].size());
-			prev_delta_weights[layer].resize(weights[layer].size());
+			weight_velocities[layer].resize(weights[layer].size());
 
 			for(size_t next_neuron = 0; next_neuron < topology[next_layer]; ++next_neuron)
 			{
 				weights[layer][next_neuron].resize(neurons[layer].size());
 				delta_weights[layer][next_neuron].resize(weights[layer][next_neuron].size());
-				prev_delta_weights[layer][next_neuron].resize(weights[layer][next_neuron].size());
+				weight_velocities[layer][next_neuron].resize(weights[layer][next_neuron].size());
 				
 				//Random weights calculation	
 				for(auto& w : weights[layer][next_neuron])
@@ -512,7 +526,7 @@ public:
 			
 			biases[layer].resize(neurons[next_layer].size());
 			delta_biases[layer].resize(biases[layer].size());
-			prev_delta_biases[layer].resize(biases[layer].size());
+			bias_velocities[layer].resize(biases[layer].size());
 		}
 
 	}
@@ -572,10 +586,7 @@ public:
 	}
 	void update(size_t iteration = 0)
 	{
-		optimizer->optimize(weights, delta_weights, prev_delta_weights, biases, delta_biases, prev_delta_biases, iteration);
-
-		prev_delta_weights = delta_weights;
-		prev_delta_biases = delta_biases;
+		optimizer->optimize(weights, delta_weights, weight_velocities, biases, delta_biases, bias_velocities, iteration);
 
 		for(auto& delta_weight : delta_weights)
 			for(auto& dw : delta_weight)
@@ -675,12 +686,12 @@ public:
 			{
 				biases[l][nn] = 0.0f;
 				delta_biases[l][nn] = 0.0f;
-				prev_delta_biases[l][nn] = 0.0f;
+				bias_velocities[l][nn] = 0.0f;
 				for(size_t n = 0; n < neurons[l].size(); ++n)
 				{
 					weights[l][nn][n] = (RNG::Float() * 2.0f - 1.0f) * 0.1f;
 					delta_weights[l][nn][n] = 0.0f;
-					prev_delta_weights[l][nn][n] = 0.0f;
+					weight_velocities[l][nn][n] = 0.0f;
 				}
 			}
 		}
@@ -824,10 +835,10 @@ private:
 	std::vector<std::vector<float>> neuron_errors;
 	std::vector<std::vector<float>> biases;
 	std::vector<std::vector<float>> delta_biases;
-	std::vector<std::vector<float>> prev_delta_biases;
+	std::vector<std::vector<float>> bias_velocities;
 	std::vector<std::vector<std::vector<float>>> weights; // [Layer][Neuron][Weight coming from previous neuron layer neurons to this neuron]
 	std::vector<std::vector<std::vector<float>>> delta_weights;
-	std::vector<std::vector<std::vector<float>>> prev_delta_weights;
+	std::vector<std::vector<std::vector<float>>> weight_velocities;
 	std::vector<std::shared_ptr<ActivationFunction>> activation_functions;
 	std::unique_ptr<CostFunction> cost_function = nullptr;
 	std::unique_ptr<Optimizer> optimizer = nullptr;
@@ -836,11 +847,10 @@ private:
 int main()
 {
 	NeuralNetwork net;
-	net.setOptimizer<SGD>(0.002f, 0.9f, 0.0001f);
+	net.setOptimizer<SGD>(0.001f, 0.9f, 0.000002f, false); //0.001f, 0.9f, 0.0001f
 	net.setCostFunction<CCE>();
 	net.add(DenseLayer<>(784));
-	net.add(DenseLayer<RELU>(16));
-	net.add(DenseLayer<RELU>(16));
+	net.add(DenseLayer<RELU>(30));
 	net.add(DenseLayer<Softmax>(10));
 	net.build();
 
@@ -851,18 +861,22 @@ int main()
 	plot << "Index,Data,Type\n";
 
 	DebugTimer t;
-	auto results = net.train(inputs, labels, 1, 32, 32);
+	auto results = net.train(inputs, labels, 15, 16, 64);
 	t.stop();
 	
-	// size_t index = 0;
-	// for(const auto& result : results)
-	// {
-	// 	plot << index << ',' << result.accuracy << ",A\n";
-	// 	plot << index << ',' << result.loss << ",L\n";
-	// 	++index;
-	// }
+	size_t index = 0;
+	for(const auto& result : results)
+	{
+		plot << index << ',' << result.accuracy << ",A\n";
+		plot << index << ',' << result.loss << ",L\n";
+		++index;
+	}
 
-	std::cout << net.test(inputs, labels).accuracy << std::endl;
+	TestResult result = net.test(inputs, labels);
+	std::cout << "Loss: " << result.loss << " | Accuracy: " << result.accuracy << std::endl;
+
+	std::ofstream save("saveGood.net", std::ios::binary);
+	save << net;
 
 
 	return 0;
