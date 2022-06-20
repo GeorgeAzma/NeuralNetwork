@@ -1,5 +1,3 @@
-
-
 struct ActivationFunction
 {
 	enum class Type : uint8_t
@@ -456,17 +454,23 @@ struct SGD : public Optimizer
 template<typename T = RELU, typename... Args>
 struct DenseLayer
 {
-	DenseLayer(size_t size, Args&&... args) 
+	DenseLayer(uint32_t size, Args&&... args) 
 	: size(size), activation_function(std::make_shared<T>(std::forward<Args>(args)...)) {}
 
 	std::shared_ptr<ActivationFunction> activation_function = nullptr;
-	size_t size;
+	uint32_t size;
 };
 
 struct TestResult
 {
 	float accuracy = 0.0f;
 	float loss = 0.0f;
+};
+
+struct TrainProps
+{
+	TrainProps(float cost_target, size_t max_iterations);
+	TrainProps(size_t epochs, size_t minibatches, size_t batches);
 };
 
 class NeuralNetwork
@@ -518,10 +522,6 @@ public:
 				weights[layer][next_neuron].resize(neurons[layer].size());
 				delta_weights[layer][next_neuron].resize(weights[layer][next_neuron].size());
 				weight_velocities[layer][next_neuron].resize(weights[layer][next_neuron].size());
-				
-				//Random weights calculation	
-				for(auto& w : weights[layer][next_neuron])
-					w = (RNG::Float() * 2.0f - 1.0f) * 0.1f;
 			}
 			
 			biases[layer].resize(neurons[next_layer].size());
@@ -529,6 +529,7 @@ public:
 			bias_velocities[layer].resize(biases[layer].size());
 		}
 
+		reset();
 	}
 
 	void forward(const std::vector<float>& inputs)
@@ -629,23 +630,6 @@ public:
 			}
 		}
 	}
-	std::vector<TestResult> train(std::vector<std::vector<float>>& inputs, std::vector<std::vector<float>>& labels, size_t epochs, size_t minibatches, size_t batches)
-	{
-		std::vector<TestResult> results(epochs * batches);
-		auto input_batches = splitVector(inputs, batches);
-		auto label_batches = splitVector(labels, batches);
-		
-		for(size_t epoch = 0; epoch < epochs; ++epoch)
-		{
-			for(size_t batch = 0; batch < input_batches.size(); ++batch)
-			{
-				results[epoch * batches + batch] = test(input_batches[batch], label_batches[batch]);
-				train(input_batches[batch], label_batches[batch], 1, minibatches);
-			}
-		}
-
-		return results;
-	}
 
 	TestResult test(const std::vector<float>& inputs, const std::vector<float>& labels)
 	{
@@ -697,9 +681,13 @@ public:
 		}
 	}
 	
-	bool isCorrect(const std::vector<float>& labels) const { return vectorToClass(getOutput()) == vectorToClass(labels); }
-	size_t getInputCount() const { return topology.front(); }
-	size_t getOutputCount() const { return topology.back(); }
+	bool isCorrect(const std::vector<float>& labels) const 
+	{ 
+		return (size_t(std::max_element(getOutput().begin(), getOutput().end()) - getOutput().begin()))
+		== size_t(std::max_element(labels.begin(), labels.end()) - labels.begin()); 
+	}
+	uint32_t getInputCount() const { return topology.front(); }
+	uint32_t getOutputCount() const { return topology.back(); }
 	float calculateLoss(const std::vector<float>& labels) { return (*cost_function)(labels, getOutput()); }
 	const std::vector<float>& getOutput() const { return activated_neurons.back(); }
 
@@ -711,7 +699,7 @@ public:
 	void operator()(const std::vector<float>& input) { forward(input); }	
 	static friend std::ostream& operator<<(std::ostream& os, const NeuralNetwork& net)
 	{
-		size_t topology_size = net.topology.size();
+		uint32_t topology_size = net.topology.size();
 		os.write((const char*)&topology_size, sizeof(topology_size));
 		for(const auto& t : net.topology)
 			os.write((const char*)&t, sizeof(t));
@@ -741,11 +729,10 @@ public:
 	}
 	static friend std::istream& operator>>(std::istream& is, NeuralNetwork& net)
 	{
-		size_t topology_size = 0;
+		uint32_t topology_size = 0;
 		is.read((char*)&topology_size, sizeof(topology_size));
 		net.topology.resize(topology_size);
 
-		size_t i = 0;
 		for(size_t i = 0; i < net.topology.size(); ++i)
 			is.read((char*)&net.topology[i], sizeof(net.topology[i]));
 
@@ -829,7 +816,7 @@ public:
 	}
 
 private:
-	std::vector<size_t> topology;
+	std::vector<uint32_t> topology;
 	std::vector<std::vector<float>> neurons;
 	std::vector<std::vector<float>> activated_neurons;
 	std::vector<std::vector<float>> neuron_errors;
@@ -847,35 +834,31 @@ private:
 int main()
 {
 	NeuralNetwork net;
-	net.setOptimizer<SGD>(0.001f, 0.9f, 0.000002f, false); //0.001f, 0.9f, 0.0001f
+	net.setOptimizer<SGD>(0.005f, 0.5f, 0.0f, true); //0.001f, 0.9f, 0.0001f
 	net.setCostFunction<CCE>();
 	net.add(DenseLayer<>(784));
-	net.add(DenseLayer<RELU>(30));
+	net.add(DenseLayer<RELU>(32));
+	net.add(DenseLayer<RELU>(32));
 	net.add(DenseLayer<Softmax>(10));
 	net.build();
 
 	std::vector<std::vector<float>> inputs = loadImages("data/mnist.input");
 	std::vector<std::vector<float>> labels = loadLabels("data/mnist.label");
 
+	std::vector<std::vector<float>> input_tests = loadImages("data/mnist-test.input");
+	std::vector<std::vector<float>> label_tests = loadLabels("data/mnist-test.label");
+
 	std::ofstream plot("plot.csv");
 	plot << "Index,Data,Type\n";
 
 	DebugTimer t;
-	auto results = net.train(inputs, labels, 15, 16, 64);
+	net.train(inputs, labels, 1, 32);
 	t.stop();
-	
-	size_t index = 0;
-	for(const auto& result : results)
-	{
-		plot << index << ',' << result.accuracy << ",A\n";
-		plot << index << ',' << result.loss << ",L\n";
-		++index;
-	}
 
-	TestResult result = net.test(inputs, labels);
+	TestResult result = net.test(input_tests, label_tests);
 	std::cout << "Loss: " << result.loss << " | Accuracy: " << result.accuracy << std::endl;
-
-	std::ofstream save("saveGood.net", std::ios::binary);
+	
+	std::ofstream save("save.net", std::ios::binary);
 	save << net;
 
 
