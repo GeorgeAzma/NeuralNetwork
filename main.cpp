@@ -369,7 +369,7 @@ public:
 		std::vector<std::vector<std::vector<float>>>& weight_velocities,
 		std::vector<std::vector<float>>& biases,
 		const std::vector<std::vector<float>>& delta_biases,
-		std::vector<std::vector<float>>& bias_velocities, size_t iteration = 0) const = 0;
+		std::vector<std::vector<float>>& bias_velocities, uint32_t iteration = 0) const = 0;
 	
 	Type getType() const { return type; }
 	
@@ -403,7 +403,7 @@ struct SGD : public Optimizer
 		std::vector<std::vector<std::vector<float>>>& weight_velocities,
 		std::vector<std::vector<float>>& biases,
 		const std::vector<std::vector<float>>& delta_biases,
-		std::vector<std::vector<float>>& bias_velocities, size_t iteration = 0) const override
+		std::vector<std::vector<float>>& bias_velocities, uint32_t iteration = 0) const override
 	{
 		float lr = learning_rate * (1.0f / (1.0f + decay * iteration));
 
@@ -465,12 +465,6 @@ struct TestResult
 {
 	float accuracy = 0.0f;
 	float loss = 0.0f;
-};
-
-struct TrainProps
-{
-	TrainProps(float cost_target, size_t max_iterations);
-	TrainProps(size_t epochs, size_t minibatches, size_t batches);
 };
 
 class NeuralNetwork
@@ -585,7 +579,7 @@ public:
 				delta_biases[layer][next_neuron] += neuron_errors[next_layer][next_neuron];
 		}
 	}
-	void update(size_t iteration = 0)
+	void update(uint32_t iteration = 0)
 	{
 		optimizer->optimize(weights, delta_weights, weight_velocities, biases, delta_biases, bias_velocities, iteration);
 
@@ -608,7 +602,7 @@ public:
 	{
 		RNG r;
 		r.seed = time(NULL);
-		size_t iteration = 0;
+		uint32_t iteration = 0;
 		for(size_t epoch = 0; epoch < epochs; ++epoch)
 		{
 			auto last_seed = r.seed;
@@ -737,7 +731,7 @@ public:
 			is.read((char*)&net.topology[i], sizeof(net.topology[i]));
 
 		net.activation_functions.resize(net.topology.size());
-		for(size_t i = 0; i < net.topology.size(); ++i)
+		for(size_t i = 0; i < net.activation_functions.size(); ++i)
 		{
 			ActivationFunction::Type activation_function_type;
 			is.read((char*)&activation_function_type, sizeof(activation_function_type));
@@ -834,7 +828,7 @@ private:
 int main()
 {
 	NeuralNetwork net;
-	net.setOptimizer<SGD>(0.005f, 0.5f, 0.0f, true); //0.001f, 0.9f, 0.0001f
+	net.setOptimizer<SGD>(0.0005f, 0.5f, 0.0f, false); //0.001f, 0.9f, 0.0001f
 	net.setCostFunction<CCE>();
 	net.add(DenseLayer<>(784));
 	net.add(DenseLayer<RELU>(32));
@@ -848,11 +842,8 @@ int main()
 	std::vector<std::vector<float>> input_tests = loadImages("data/mnist-test.input");
 	std::vector<std::vector<float>> label_tests = loadLabels("data/mnist-test.label");
 
-	std::ofstream plot("plot.csv");
-	plot << "Index,Data,Type\n";
-
 	DebugTimer t;
-	net.train(inputs, labels, 1, 32);
+	net.train(inputs, labels, 10, 32);
 	t.stop();
 
 	TestResult result = net.test(input_tests, label_tests);

@@ -114,7 +114,7 @@ static std::vector<std::vector<float>> loadImages(const char* path)
 	{
 		normalized_data[i].resize(data[i].size());
 		for(size_t j = 0; j < width * height; ++j)
-			normalized_data[i][j] = float(data[i][j]) / 255.0f;
+			normalized_data[i][j] = (data[i][j] >= 128 ? 1.0f : 0.0f);
 	}
 	return normalized_data;
 }
