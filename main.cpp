@@ -481,10 +481,10 @@ public:
 	void build()
 	{
 		if(!cost_function.get()) 
-			cost_function = std::make_unique<MSE>();
+			cost_function = std::make_shared<MSE>();
 
 		if(!optimizer.get()) 
-			optimizer = std::make_unique<SGD>();
+			optimizer = std::make_shared<SGD>();
 
 		//TODO: Assert that topology.size() >= 2;
 		neurons.resize(topology.size());
@@ -682,14 +682,22 @@ public:
 	}
 	uint32_t getInputCount() const { return topology.front(); }
 	uint32_t getOutputCount() const { return topology.back(); }
+	uint32_t getLayerCount() const { return topology.size(); }
+	uint32_t getLayerSize(size_t layer) const { return topology[layer]; }
+	float getWeight(size_t layer, size_t neuron, size_t weight) const { return weights[layer][neuron][weight]; }
+	const std::vector<std::vector<std::vector<float>>>& getWeights() const { return weights; }
+	float getBias(size_t layer, size_t neuron) const { return biases[layer][neuron]; }
+	const std::vector<std::vector<float>>& getBiases() const { return biases; }
 	float calculateLoss(const std::vector<float>& labels) { return (*cost_function)(labels, getOutput()); }
 	const std::vector<float>& getOutput() const { return activated_neurons.back(); }
 
 	template<typename T, typename... Args> 
-	void setCostFunction(Args... args) { cost_function = std::make_unique<T>(std::forward<Args>(args)...); }
+	void setCostFunction(Args... args) { cost_function = std::make_shared<T>(std::forward<Args>(args)...); }
 	template<typename T, typename... Args>
-	void setOptimizer(Args... args) { optimizer = std::make_unique<T>(std::forward<Args>(args)...); }
-
+	void setOptimizer(Args... args) { optimizer = std::make_shared<T>(std::forward<Args>(args)...); }
+	void setWeight(float value, uint32_t layer, uint32_t neuron, uint32_t weight) { weights[layer][neuron][weight] = value; }
+	void setBias(float value, uint32_t layer, uint32_t neuron) { biases[layer][neuron] = value; }
+	
 	void operator()(const std::vector<float>& input) { forward(input); }	
 	static friend std::ostream& operator<<(std::ostream& os, const NeuralNetwork& net)
 	{
@@ -779,10 +787,10 @@ public:
 		switch(cost_function_type)
 		{
 		case CostFunction::Type::MSE:
-			net.cost_function = std::make_unique<MSE>();
+			net.cost_function = std::make_shared<MSE>();
 			break;
 		case CostFunction::Type::CCE:
-			net.cost_function = std::make_unique<CCE>();
+			net.cost_function = std::make_shared<CCE>();
 			break;
 		}
 		//is >> *net.cost_function;
@@ -791,7 +799,7 @@ public:
 		switch(optimizer_type)
 		{
 		case Optimizer::Type::SGD:
-			net.optimizer = std::make_unique<SGD>();
+			net.optimizer = std::make_shared<SGD>();
 			break;
 		}
 		is >> *net.optimizer;
@@ -821,37 +829,255 @@ private:
 	std::vector<std::vector<std::vector<float>>> delta_weights;
 	std::vector<std::vector<std::vector<float>>> weight_velocities;
 	std::vector<std::shared_ptr<ActivationFunction>> activation_functions;
-	std::unique_ptr<CostFunction> cost_function = nullptr;
-	std::unique_ptr<Optimizer> optimizer = nullptr;
+	std::shared_ptr<CostFunction> cost_function = nullptr;
+	std::shared_ptr<Optimizer> optimizer = nullptr;
+};
+
+class Agent
+{
+public:
+	virtual void calculateFitness() = 0;
+	virtual std::unique_ptr<Agent> createBaby(const Agent& other) const = 0;
+	virtual void mutate(float mutation_rate) = 0;
+	float getFitness() const { return fitness; }
+	bool operator>=(const Agent& other) const { return fitness >= other.fitness; }
+	bool operator<=(const Agent& other) const { return fitness <= other.fitness; }
+	bool operator>(const Agent& other) const { return fitness > other.fitness; }
+	bool operator<(const Agent& other) const { return fitness < other.fitness; }
+
+protected:
+	float fitness = 0.0f;
+};
+
+class Dot : public Agent
+{
+public:
+	Dot() {}
+	Dot(const std::pair<float, float>& target) 
+	: target(target)
+	{
+		net.setOptimizer<SGD>();
+		net.add(DenseLayer<>(4));
+		net.add(DenseLayer<Tanh>(4));
+		net.add(DenseLayer<Linear>(2));
+		net.build();
+	}
+
+	float distance2()
+	{
+		return (target.first - position.first) * (target.first - position.first)
+			 + (target.second - position.second) * (target.second - position.second);
+	}
+
+	void update() 
+	{ 
+		if(finished) return;
+		net.forward({ position.first, position.second, target.first, target.second });
+		acceleration.first = net.getOutput()[0];
+		acceleration.second = net.getOutput()[1];
+		velocity.first += acceleration.first;
+		velocity.second += acceleration.second;
+		velocity.first = std::min(velocity.first, 5.0f);
+		velocity.second = std::min(velocity.second, 5.0f);
+		position.first += velocity.first;
+		position.second += velocity.second;
+		if(position.first > 100.0f || position.first < -100.0f
+		|| position.second > 100.0f || position.second < -100.0f || distance2() < 0.2f)
+			finished = true;
+	}
+
+	std::pair<float, float> getValue() const { return position; }
+	void calculateFitness() override 
+	{ 
+		fitness = 1.0f / (0.001f + distance2());
+	}
+	std::unique_ptr<Agent> createBaby(const Agent& other) const override
+	{
+		const Dot& other_agent = (const Dot&)other;
+		std::unique_ptr<Dot> new_agent = std::make_unique<Dot>(target);
+		new_agent->net = net;
+		#if 1
+		for(size_t i = 0; i < net.getWeights().size(); ++i)
+			for(size_t j = 0; j < net.getWeights()[i].size(); ++j)
+				for(size_t k = 0; k < net.getWeights()[i][j].size(); ++k)
+					new_agent->net.setWeight(RNG::Bool() ? net.getWeight(i, j, k) : other_agent.net.getWeight(i, j, k), i, j, k);
+
+			for(size_t i = 0; i < net.getBiases().size(); ++i)
+				for(size_t j = 0; j < net.getBiases()[i].size(); ++j)
+					new_agent->net.setBias(RNG::Bool() ? net.getBias(i, j) : other_agent.net.getBias(i, j), i, j);
+		#else
+			// std::vector<float> flat;
+			// for(size_t i = 0; i < net.getWeights().size(); ++i)
+			// 	for(size_t j = 0; j < net.getWeights()[i].size(); ++j)
+			// 		flat.insert(flat.end(), net.getWeights()[i][j].begin(), net.getWeights()[i][j].end());
+	
+			
+			// std::vector<float> other_flat;
+			// for(size_t i = 0; i < net.getWeights().size(); ++i)
+			// 	for(size_t j = 0; j < net.getWeights()[i].size(); ++j)
+			// 		other_flat.insert(other_flat.end(), other_agent.net.getWeights()[i][j].begin(), other_agent.net.getWeights()[i][j].end());
+
+			// size_t split = RNG::Uint() % flat.size();
+
+			// std::vector<float> joined(flat.size());
+			// std::copy(flat.begin(), flat.begin() + split, joined.begin());
+			// std::copy(other_flat.begin() + split, other_flat.end(), joined.begin() + split);
+			// for(size_t i = 0; i < net.getWeights().size(); ++i)
+			// 	for(size_t j = 0; j < net.getWeights()[i].size(); ++j)
+			// 		for(size_t k = 0; k < net.getWeights()[i][j].size(); ++k)
+			// 			new_agent->net.setWeight();
+		#endif
+		return new_agent;
+	}
+	void mutate(float mutation_rate) override
+	{
+		for(size_t i = 0; i < net.getWeights().size(); ++i)
+			for(size_t j = 0; j < net.getWeights()[i].size(); ++j)
+				for(size_t k = 0; k < net.getWeights()[i][j].size(); ++k)
+					if(RNG::Float() <= mutation_rate)
+						net.setWeight(net.getWeight(i, j, k) + (RNG::Float() * 2.0f - 1.0f), i, j, k);
+	}
+
+private:
+	NeuralNetwork net;
+	std::pair<float, float> position = { 0.0f, 0.0f };
+	std::pair<float, float> acceleration = { 0.0f, 0.0f };
+	std::pair<float, float> velocity = { 0.0f, 0.0f };
+	std::pair<float, float> target = { 0.0f, 0.0f };
+	bool finished = false;
+};
+
+template<typename T>
+class GeneticAlgorithm
+{
+public:
+	GeneticAlgorithm() = default;
+
+	void setMutationRate(float mutation_rate = 0.05f)
+	{
+		this->mutation_rate = mutation_rate;
+	}
+
+	void update(std::vector<T>& agents)
+	{
+		calculateFitness(agents);
+		calculateFitnessSum(agents);
+		doNaturalSelection(agents);
+		mutateAgents(agents);
+		++generation;
+	}
+
+	uint32_t getGeneration() const { return generation; }
+	float getFitnessSum() const { return fitness_sum; }
+
+private:
+
+	void calculateFitness(std::vector<T>& agents)
+	{
+		for(auto& agent : agents)
+			agent.calculateFitness();
+	}
+	
+	void calculateFitnessSum(const std::vector<T>& agents)
+	{
+		fitness_sum = 0.0f;
+		for(const auto& agent : agents)
+			fitness_sum += agent.getFitness();
+	}
+
+	void doNaturalSelection(std::vector<T>& agents)
+	{
+		std::vector<T> new_agents = agents;
+
+		for(size_t i = 0; i < agents.size(); ++i)
+		{
+			const T& mother = selectParent(agents);
+			const T* father = &selectParent(agents); 
+			for(uint32_t i = 0; (&mother == father) && (i < 8); ++i)
+				father = &selectParent(agents);
+			const T& new_agent1 = ((const T&)*mother.createBaby(*father));
+			const T& new_agent2 = ((const T&)*father->createBaby(mother));
+			new_agents.emplace_back(new_agent1);
+			new_agents.back().calculateFitness();
+			new_agents.emplace_back(new_agent2);
+			new_agents.back().calculateFitness();
+		}
+
+		std::sort(new_agents.begin(), new_agents.end(), std::greater<>());
+		agents = std::vector<T>(new_agents.begin(), new_agents.begin() + agents.size());
+	}
+
+	void mutateAgents(std::vector<T>& agents)
+	{
+		for(auto& agent : agents)
+			agent.mutate(mutation_rate);
+	}
+
+	const T& selectParent(const std::vector<T>& agents) const
+	{
+		float rand = RNG::Float() * fitness_sum;
+		float running_sum = 0.0f;
+		for(const auto& agent : agents)
+		{
+			running_sum += agent.getFitness();
+			if(running_sum >= rand)
+				return agent;
+		}
+		return agents.back();
+	}
+
+private:
+	std::vector<T> agents = {};
+	float mutation_rate = 0.05f;
+	float fitness_sum = 0.0f;
+	uint32_t generation = 0;
 };
 
 int main()
 {
-	NeuralNetwork net;
-	net.setOptimizer<SGD>(0.0005f, 0.5f, 0.0f, false); //0.001f, 0.9f, 0.0001f
-	net.setCostFunction<CCE>();
-	net.add(DenseLayer<>(784));
-	net.add(DenseLayer<RELU>(32));
-	net.add(DenseLayer<RELU>(32));
-	net.add(DenseLayer<Softmax>(10));
-	net.build();
+	//NeuralNetwork net;
+	//net.setOptimizer<SGD>(0.0005f, 0.5f, 0.0f, false); //0.001f, 0.9f, 0.0001f
+	//net.setCostFunction<CCE>();
+	//net.add(DenseLayer<>(784));
+	//net.add(DenseLayer<RELU>(32));
+	//net.add(DenseLayer<RELU>(32));
+	//net.add(DenseLayer<Softmax>(10));
+	//net.build();
 
-	std::vector<std::vector<float>> inputs = loadImages("data/mnist.input");
-	std::vector<std::vector<float>> labels = loadLabels("data/mnist.label");
+	//std::vector<std::vector<float>> inputs = loadImages("data/mnist.input");
+	//std::vector<std::vector<float>> labels = loadLabels("data/mnist.label");
 
-	std::vector<std::vector<float>> input_tests = loadImages("data/mnist-test.input");
-	std::vector<std::vector<float>> label_tests = loadLabels("data/mnist-test.label");
+	//std::vector<std::vector<float>> input_tests = loadImages("data/mnist-test.input");
+	//std::vector<std::vector<float>> label_tests = loadLabels("data/mnist-test.label");
 
-	DebugTimer t;
-	net.train(inputs, labels, 10, 32);
-	t.stop();
+	//DebugTimer t;
+	//net.train(inputs, labels, 1, 32);
+	//t.stop();
 
-	TestResult result = net.test(input_tests, label_tests);
-	std::cout << "Loss: " << result.loss << " | Accuracy: " << result.accuracy << std::endl;
-	
-	std::ofstream save("save.net", std::ios::binary);
-	save << net;
+	//TestResult result = net.test(input_tests, label_tests);
+	//std::cout << "Loss: " << result.loss << " | Accuracy: " << result.accuracy << std::endl;
+	//
+	//std::ofstream save("save.net", std::ios::binary);
+	//save << net;
 
+	GeneticAlgorithm<Dot> algo;
+	algo.setMutationRate(0.15f);
+
+	std::pair<float, float> target = { 5.0f, -6.0f };
+	std::vector<Dot> dots(100, Dot(target));
+
+	for(size_t i = 0; i < 40; ++i)
+	{
+		for(size_t j = 0; j < 20; ++j)
+			for(auto& dot : dots)
+				dot.update();
+
+		algo.update(dots);
+	}
+
+	for(auto& dot : dots)
+		std::cout << dot.getValue().first << ", " << dot.getValue().second << std::endl;
+	std::cout << "Gen: " << algo.getGeneration() << " | Gen Fitness: " << algo.getFitnessSum() << std::endl;
 
 	return 0;
 }
