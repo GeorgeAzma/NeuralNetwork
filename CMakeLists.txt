@@ -9,14 +9,14 @@ include(FetchContent)
 include(ExternalProject)
 
 file(GLOB FILES "*.cpp")
-add_executable(NeuralNetwork ${FILES}) 
+add_executable(NeuralNetwork ${FILES})
 
 target_precompile_headers(NeuralNetwork PRIVATE include.h)
 target_link_libraries(NeuralNetwork PRIVATE ${EXTRA_LIBS})
 target_include_directories(NeuralNetwork PRIVATE ${INCLUDE_DIRS})
 
-#Copy data folder where exe file is
+# Copy data folder where exe file is
 add_custom_command(TARGET NeuralNetwork POST_BUILD
-COMMAND ${CMAKE_COMMAND} -E copy_directory 
-${CMAKE_SOURCE_DIR}/data 
-$<TARGET_FILE_DIR:NeuralNetwork>/data)
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${CMAKE_SOURCE_DIR}/data
+    $<TARGET_FILE_DIR:NeuralNetwork>/data)
